@@ -61,21 +61,19 @@ rejects the rapid-trigger commands that newer analog keyboards use.
 Double typing fix without Rapid Trigger: give keys a release point well above the press point
 (e.g. press 2.0 mm, release distance 0.4–0.5 mm), and/or set release debounce to 3–5 ms.
 
-## Synapse must be fully uninstalled first
+## Using it alongside Synapse
 
-Do **not** just close Synapse. Razer's input filter driver (`RZVIRTUAL` / `RZCONTROL` devices)
-sends every keystroke through Synapse. With the driver installed and Synapse closed, **the keyboard stops typing**.
-While Synapse is running, it also sends the keyboard lighting frames nonstop, so keyboard settings can't be read or written (the mouse works either way).
+You don't need to uninstall Synapse. **Quit it from its tray icon** (right-click → Quit) and RazerLite can
+read and change everything; the keyboard keeps typing normally.
 
-To switch over:
-1. In Synapse, set what you want once (or skip; RazerLite can set it after).
-2. Settings → Apps → uninstall **Razer Synapse**, **Razer Chroma**, **Razer App Engine** (and Razer Central if listed). Reboot.
-3. Device Manager → View → Devices by connection. If any **Razer Control Device** or `RZVIRTUAL` entries remain,
-   uninstall each with "Attempt to remove the driver" ticked. Unplug and replug the keyboard and dongle.
-4. Run `target\release\razerlite.exe`.
-
-If the keyboard ever stops typing while Synapse's driver is still installed, start Synapse again:
-`"C:\Program Files\Razer\RazerAppEngine\RazerAppEngine.exe" --url-params=apps=synapse,chroma-app --launch-force-hidden=synapse,chroma-app --autoStart=1`
+- **Don't end Synapse in Task Manager.** Razer's input filter driver (`RZVIRTUAL` / `RZCONTROL` devices) routes
+  keystrokes through Synapse; a killed Synapse leaves the keyboard dead until Synapse starts again:
+  `"C:\Program Files\Razer\RazerAppEngine\RazerAppEngine.exe" --url-params=apps=synapse,chroma-app --launch-force-hidden=synapse,chroma-app --autoStart=1`
+- While Synapse runs it handles your keys itself and, with its window open, sends the keyboard lighting frames
+  nonstop, so keyboard reads/writes fail. The mouse works either way.
+- To stop Synapse starting with Windows: Task Manager → Startup apps → disable Razer Synapse / Razer App Engine.
+- Optional, once you're happy: uninstall Razer Synapse, Razer Chroma and Razer App Engine, then remove any
+  leftover **Razer Control Device** entries in Device Manager (View → Devices by connection, tick "remove driver").
 
 ## Build
 

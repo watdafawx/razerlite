@@ -31,8 +31,10 @@ impl App {
     pub fn full(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         let r = ui.max_rect();
+        // No OS frame, so draw our own resize zones on the edges and corners.
+        let resizing = !ctx.input(|i| i.viewport().maximized.unwrap_or(false)) && resize_edges(&ctx, r);
         let title = Rect::from_min_size(r.min, vec2(r.width(), TITLE_H));
-        self.title_bar(ui, title, &ctx);
+        self.title_bar(ui, title, &ctx, resizing);
 
         let mut body = r;
         body.min.y += TITLE_H;
@@ -58,11 +60,11 @@ impl App {
 
     // ------------------------------------------------------------ chrome
 
-    fn title_bar(&mut self, ui: &mut Ui, r: Rect, ctx: &egui::Context) {
+    fn title_bar(&mut self, ui: &mut Ui, r: Rect, ctx: &egui::Context, resizing: bool) {
         let p = ui.painter().clone();
         p.rect_filled(r, 0, TOP);
         let drag = ui.interact(r, ui.scope_id().with("titlebar"), Sense::click_and_drag());
-        if drag.drag_started() {
+        if drag.drag_started() && !resizing {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
         if drag.double_clicked() {
@@ -200,11 +202,15 @@ impl App {
         ui.add_space(12.0);
         egui::Frame::new().fill(alpha(WARN, 18)).stroke(Stroke::new(1.0, alpha(WARN, 64))).corner_radius(8).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(sb("Synapse is running.", 13.0).color(WARN));
-                ui.label(RichText::new("It keeps the keyboard busy, so keyboard changes fail. The mouse works.").color(Color32::from_rgb(0xf5, 0xd3, 0x6b)).size(13.0));
+                ui.label(
+                    RichText::new("It handles your keys and keeps the keyboard busy. Quit it from its tray icon, not Task Manager.")
+                        .color(Color32::from_rgb(0xf5, 0xd3, 0x6b))
+                        .size(13.0),
+                );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if secondary(ui, if self.show_synapse_help { "Hide" } else { "How to remove" }, true).clicked() {
+                    if secondary(ui, if self.show_synapse_help { "Hide" } else { "How to" }, true).clicked() {
                         self.show_synapse_help = !self.show_synapse_help;
                     }
                 });
@@ -212,10 +218,10 @@ impl App {
             if self.show_synapse_help {
                 ui.add_space(6.0);
                 for s in [
-                    "1. Don't just close Synapse: its driver swallows all keystrokes without it.",
-                    "2. Settings → Apps: uninstall Razer Synapse, Razer Chroma and Razer App Engine. Reboot.",
-                    "3. Device Manager → View → Devices by connection: uninstall any leftover \"Razer Control Device\" (tick \"remove driver\").",
-                    "4. Unplug and replug the keyboard and mouse dongle, then Reload in RazerLite.",
+                    "1. Right-click the Razer icon in the tray → Quit. Your keyboard keeps working.",
+                    "2. Don't end Synapse in Task Manager: its driver then swallows every keystroke until Synapse starts again.",
+                    "3. To stop it starting with Windows: Task Manager → Startup apps → disable Razer Synapse / Razer App Engine.",
+                    "4. Optional, later: uninstall Synapse, Chroma and App Engine, plus leftover \"Razer Control Device\" drivers.",
                 ] {
                     ui.label(RichText::new(s).color(TXT).size(12.5));
                 }
@@ -405,10 +411,8 @@ impl App {
             let (txt, col) = match self.kb_sub {
                 Sub::Customize if *id == keymap::FN_KEY => (String::new(), DIM),
                 Sub::Customize => match kb.functions.get(&(*id, self.layer)) {
-                    Some(KeyFn::Key { hid, mods }) if Some(*hid) != keymap::default_hid(*id) || *mods != 0 => (keymap::hid_name(*hid), ACC2),
-                    Some(KeyFn::Disabled) => ("off".into(), BAD),
-                    Some(KeyFn::Mouse(b)) => (format!("M{b}"), INFO),
-                    _ => (String::new(), DIM),
+                    Some(f) => fn_badge(*id, *f).unwrap_or((String::new(), DIM)),
+                    None => (String::new(), DIM),
                 },
                 Sub::Lighting => (String::new(), DIM),
                 _ => match kb.thresholds.get(id) {
@@ -452,20 +456,71 @@ impl App {
                     self.release_mm = (d::byte_to_mm(rl) * 10.0).round() / 10.0;
                 }
             }
-            match kb.functions.get(&(id, self.layer)) {
-                Some(KeyFn::Key { hid, mods }) if Some(*hid) != keymap::default_hid(id) || *mods != 0 => {
-                    self.remap_kind = 1;
-                    self.remap_hid = *hid;
-                    self.remap_mods = *mods;
-                }
-                Some(KeyFn::Mouse(b)) => {
-                    self.remap_kind = 2;
-                    self.remap_mouse = *b;
-                }
-                Some(KeyFn::Disabled) => self.remap_kind = 3,
-                _ => self.remap_kind = 0,
+            if let Some(f) = kb.functions.get(&(id, self.layer)) {
+                self.load_remap(id, *f);
             }
         }
+    }
+
+    /// Point the Customize controls at what a key currently does.
+    fn load_remap(&mut self, id: u8, f: KeyFn) {
+        self.remap_turbo = false;
+        self.remap_kind = match f {
+            KeyFn::Key { hid, mods } if Some(hid) == keymap::default_hid(id) && mods == 0 => RemapKind::Default,
+            KeyFn::Key { hid, mods } => {
+                self.remap_hid = hid;
+                self.remap_mods = mods;
+                RemapKind::Keyboard
+            }
+            KeyFn::Turbo { hid, mods, interval_ms } => {
+                self.remap_hid = hid;
+                self.remap_mods = mods;
+                self.remap_turbo = true;
+                self.remap_rate = (1000 / interval_ms.max(1)).clamp(1, 30) as u8;
+                RemapKind::Keyboard
+            }
+            KeyFn::Mouse(b) => {
+                self.remap_mouse = b;
+                RemapKind::Mouse
+            }
+            KeyFn::DoubleClick => {
+                self.remap_mouse = 0;
+                RemapKind::Mouse
+            }
+            KeyFn::Media(m) => {
+                self.remap_media = m;
+                RemapKind::Media
+            }
+            KeyFn::WinShortcut(w) => {
+                self.remap_win = w;
+                RemapKind::Windows
+            }
+            KeyFn::Power(x) => {
+                self.remap_power = x;
+                RemapKind::Power
+            }
+            KeyFn::Hypershift => RemapKind::Hypershift,
+            KeyFn::Disabled => RemapKind::Disable,
+            KeyFn::Other(_) => RemapKind::Default,
+        };
+    }
+
+    /// The function the Customize controls describe (None = what's printed on the key).
+    fn remap_target(&self) -> Option<KeyFn> {
+        Some(match self.remap_kind {
+            RemapKind::Default => return None,
+            RemapKind::Keyboard if self.remap_turbo => {
+                KeyFn::Turbo { hid: self.remap_hid, mods: self.remap_mods, interval_ms: 1000 / self.remap_rate.max(1) as u16 }
+            }
+            RemapKind::Keyboard => KeyFn::Key { hid: self.remap_hid, mods: self.remap_mods },
+            RemapKind::Mouse if self.remap_mouse == 0 => KeyFn::DoubleClick,
+            RemapKind::Mouse => KeyFn::Mouse(self.remap_mouse),
+            RemapKind::Media => KeyFn::Media(self.remap_media),
+            RemapKind::Windows => KeyFn::WinShortcut(self.remap_win),
+            RemapKind::Power => KeyFn::Power(self.remap_power),
+            RemapKind::Hypershift => KeyFn::Hypershift,
+            RemapKind::Disable => KeyFn::Disabled,
+        })
     }
 
     fn selected_or_all(&self) -> Vec<u8> {
@@ -614,87 +669,141 @@ impl App {
             _ => format!("{n} keys"),
         };
         two_panels(ui, |ui, ui2| {
-{
+            {
                 panel(ui, &title, |ui| {
-                    hint(ui, if n == 0 { "Click a key above. Ctrl+click or drag for several." } else { "Pick what it does." });
+                    hint(ui, if n == 0 { "Click a key above. Ctrl+click or drag for several." } else { "Pick what it does. Saved on the keyboard, works without the app." });
                     ui.add_space(4.0);
-                    let rows = [("Default", "what's printed on the key"), ("Keyboard key", "any key, with modifiers"), ("Mouse button", "click, back, forward"), ("Disable", "key does nothing")];
-                    for (i, (a, b)) in rows.iter().enumerate() {
-                        if list_row(ui, a, b, self.remap_kind == i).clicked() {
-                            self.remap_kind = i;
+                    for k in RemapKind::ALL {
+                        if list_row(ui, k.name(), k.desc(), self.remap_kind == k).clicked() {
+                            self.remap_kind = k;
                         }
-                    }
-                    ui.add_space(6.0);
-                    match self.remap_kind {
-                        1 => {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Sends").color(TXT));
-                                egui::ComboBox::from_id_salt("remap_key").selected_text(keymap::hid_name(self.remap_hid)).height(320.0).show_ui(ui, |ui| {
-                                    for id in keymap::all_ids() {
-                                        if let Some(h) = keymap::default_hid(id) {
-                                            ui.selectable_value(&mut self.remap_hid, h, keymap::label(id));
-                                        }
-                                    }
-                                });
-                                for (bit, name) in [(1u8, "Ctrl"), (2, "Shift"), (4, "Alt"), (8, "Win")] {
-                                    let mut on = self.remap_mods & bit != 0;
-                                    if ui.checkbox(&mut on, name).changed() {
-                                        self.remap_mods ^= bit;
-                                    }
-                                }
-                            });
+                        if self.remap_kind == k && matches!(k, RemapKind::Keyboard | RemapKind::Mouse | RemapKind::Media | RemapKind::Windows | RemapKind::Power) {
+                            ui.add_space(2.0);
+                            self.remap_options(ui);
+                            ui.add_space(6.0);
                         }
-                        2 => {
-                            let names = ["Left", "Right", "Middle", "Back", "Forward"];
-                            if let Some(i) = seg(ui, &names, Some((self.remap_mouse as usize).saturating_sub(1)), true) {
-                                self.remap_mouse = i as u8 + 1;
-                            }
-                        }
-                        _ => {}
                     }
                     ui.add_space(8.0);
                     let can = n > 0 && kb.keys_loaded;
                     if primary(ui, &format!("Save to {n} key{}", if n == 1 { "" } else { "s" }), can).clicked() {
-                        let f = match self.remap_kind {
-                            0 => None,
-                            1 => Some(KeyFn::Key { hid: self.remap_hid, mods: self.remap_mods }),
-                            2 => Some(KeyFn::Mouse(self.remap_mouse)),
-                            _ => Some(KeyFn::Disabled),
-                        };
-                        self.send(Job::KbFunction { keys: self.selected_or_all(), mode: self.layer, f });
+                        let keys: Vec<u8> = self.selected_or_all();
+                        self.send(Job::KbFunction { keys, mode: self.layer, f: self.remap_target() });
                     }
                 });
-}
-{ let ui = ui2;
+            }
+            {
+                let ui = ui2;
                 panel(ui, "Layer", |ui| {
-                    hint(ui, "Hypershift: hold Fn for a second layer.");
+                    hint(ui, "Hypershift: hold Fn (or a key set to Hypershift) for a second layer.");
                     if let Some(i) = seg(ui, &["Standard", "Hypershift"], Some(self.layer as usize), true) {
                         self.layer = i as u8;
                         self.on_key_selected(kb);
                     }
                     ui.add_space(10.0);
-                    let remapped: Vec<String> = keymap::all_ids()
+                    let changed: Vec<String> = keymap::all_ids()
                         .into_iter()
                         .filter(|&id| id != keymap::FN_KEY)
-                        .filter_map(|id| match kb.functions.get(&(id, self.layer)) {
-                            Some(KeyFn::Key { hid, mods }) if Some(*hid) != keymap::default_hid(id) || *mods != 0 => Some(format!("{} → {}", keymap::label(id), keymap::hid_name(*hid))),
-                            Some(KeyFn::Disabled) => Some(format!("{} → off", keymap::label(id))),
-                            Some(KeyFn::Mouse(b)) => Some(format!("{} → mouse {b}", keymap::label(id))),
-                            _ => None,
+                        .filter_map(|id| {
+                            let f = kb.functions.get(&(id, self.layer))?;
+                            fn_badge(id, *f).map(|_| format!("{} → {}", keymap::label(id), fn_long(*f)))
                         })
                         .collect();
-                    ui.label(sb(format!("Changed keys ({})", remapped.len()), 13.0).color(FG));
-                    if remapped.is_empty() {
+                    ui.label(sb(format!("Changed keys ({})", changed.len()), 13.0).color(FG));
+                    if changed.is_empty() {
                         hint(ui, "None. Every key does what's printed on it.");
                     }
-                    for s in remapped.iter().take(12) {
+                    for s in changed.iter().take(14) {
                         ui.label(RichText::new(s).color(TXT).size(12.5));
                     }
-                    ui.add_space(6.0);
-                    hint(ui, "Fn can't be remapped. Saved to the keyboard, works without the app.");
+                    if changed.len() > 14 {
+                        hint(ui, &format!("…and {} more", changed.len() - 14));
+                    }
                 });
-}
-});
+                ui.add_space(14.0);
+                panel(ui, "Gaming mode", |ui| {
+                    hint(ui, "Disables the Windows and Menu keys on the keyboard itself.");
+                    let on = [127u8, 129].iter().all(|k| matches!(kb.functions.get(&(*k, 0)), Some(KeyFn::Disabled)));
+                    let mut v = on;
+                    ui.horizontal(|ui| {
+                        if switch(ui, &mut v).changed() && kb.keys_loaded {
+                            self.send(Job::KbFunction { keys: vec![127, 129], mode: 0, f: if v { Some(KeyFn::Disabled) } else { None } });
+                        }
+                        ui.label(RichText::new(if on { "On: Win and Menu do nothing" } else { "Off" }).color(TXT));
+                    });
+                });
+                ui.add_space(14.0);
+                panel(ui, "Not on the keyboard", |ui| {
+                    hint(ui, "Synapse does these in software through its driver, so they need RazerLite running in the background. Planned:");
+                    ui.label(RichText::new("Controller / joystick (gamepad emulation) · Launch program · Macros · Switch lighting effect · Inter-device").color(DIM).size(12.5));
+                });
+            }
+        });
+    }
+
+    fn remap_options(&mut self, ui: &mut Ui) {
+        ui.indent("remap_opts", |ui| match self.remap_kind {
+            RemapKind::Keyboard => {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Sends").color(TXT));
+                    egui::ComboBox::from_id_salt("remap_key").selected_text(keymap::hid_name(self.remap_hid)).height(320.0).show_ui(ui, |ui| {
+                        for id in keymap::all_ids() {
+                            if let Some(h) = keymap::default_hid(id) {
+                                ui.selectable_value(&mut self.remap_hid, h, keymap::label(id));
+                            }
+                        }
+                    });
+                    for (bit, name) in [(1u8, "Ctrl"), (2, "Shift"), (4, "Alt"), (8, "Win")] {
+                        let mut on = self.remap_mods & bit != 0;
+                        if ui.checkbox(&mut on, name).changed() {
+                            self.remap_mods ^= bit;
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.remap_turbo, "Turbo (repeat while held)");
+                    if self.remap_turbo {
+                        ui.add(egui::Slider::new(&mut self.remap_rate, 1..=30).suffix(" /s"));
+                    }
+                });
+            }
+            RemapKind::Mouse => {
+                ui.horizontal_wrapped(|ui| {
+                    for (name, code) in d::MOUSE_BUTTONS.iter().copied().chain(std::iter::once(("Double click", 0u8))) {
+                        if chip(ui, name, self.remap_mouse == code).clicked() {
+                            self.remap_mouse = code;
+                        }
+                    }
+                });
+            }
+            RemapKind::Media => {
+                ui.horizontal_wrapped(|ui| {
+                    for (name, code) in d::MEDIA_KEYS {
+                        if chip(ui, name, self.remap_media == code).clicked() {
+                            self.remap_media = code;
+                        }
+                    }
+                });
+            }
+            RemapKind::Windows => {
+                ui.horizontal_wrapped(|ui| {
+                    for (name, code) in d::WIN_SHORTCUTS {
+                        if chip(ui, name, self.remap_win == code).clicked() {
+                            self.remap_win = code;
+                        }
+                    }
+                });
+            }
+            RemapKind::Power => {
+                ui.horizontal_wrapped(|ui| {
+                    for (name, code) in d::POWER_KEYS {
+                        if chip(ui, name, self.remap_power == code).clicked() {
+                            self.remap_power = code;
+                        }
+                    }
+                });
+            }
+            _ => {}
+        });
     }
 
     fn kb_lighting(&mut self, ui: &mut Ui, kb: &crate::state::KbState) {
@@ -1122,6 +1231,32 @@ impl App {
 
 // ------------------------------------------------------------ layout helpers
 
+/// Resize handles for the undecorated window: 6 px edges, 14 px corners.
+/// Returns true while the pointer is over one (so the title bar doesn't start a move).
+fn resize_edges(ctx: &egui::Context, r: Rect) -> bool {
+    use egui::{CursorIcon as C, ResizeDirection as D};
+    let Some(p) = ctx.input(|i| i.pointer.hover_pos()) else { return false };
+    let (e, c) = (6.0, 14.0);
+    let (l, rt, t, b) = (p.x - r.min.x, r.max.x - p.x, p.y - r.min.y, r.max.y - p.y);
+    let dir = match () {
+        _ if l < c && t < c => Some((D::NorthWest, C::ResizeNorthWest)),
+        _ if rt < c && t < e => Some((D::NorthEast, C::ResizeNorthEast)),
+        _ if l < c && b < c => Some((D::SouthWest, C::ResizeSouthWest)),
+        _ if rt < c && b < c => Some((D::SouthEast, C::ResizeSouthEast)),
+        _ if l < e => Some((D::West, C::ResizeWest)),
+        _ if rt < e => Some((D::East, C::ResizeEast)),
+        _ if t < 4.0 => Some((D::North, C::ResizeNorth)),
+        _ if b < e => Some((D::South, C::ResizeSouth)),
+        _ => None,
+    };
+    let Some((dir, cursor)) = dir else { return false };
+    ctx.set_cursor_icon(cursor);
+    if ctx.input(|i| i.pointer.primary_pressed()) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+    }
+    true
+}
+
 fn centered(ui: &mut Ui, max_w: f32, add: impl FnOnce(&mut Ui)) {
     let w = ui.available_width().min(max_w);
     let pad = (ui.available_width() - w) / 2.0;
@@ -1189,4 +1324,102 @@ fn empty(ui: &mut Ui, title: &str, desc: &str) {
         ui.label(sb(title, 18.0).color(FG));
         ui.label(RichText::new(desc).color(MUT));
     });
+}
+
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RemapKind {
+    Default,
+    Keyboard,
+    Mouse,
+    Media,
+    Windows,
+    Power,
+    Hypershift,
+    Disable,
+}
+
+impl RemapKind {
+    const ALL: [RemapKind; 8] =
+        [RemapKind::Default, RemapKind::Keyboard, RemapKind::Mouse, RemapKind::Media, RemapKind::Windows, RemapKind::Power, RemapKind::Hypershift, RemapKind::Disable];
+    fn name(self) -> &'static str {
+        match self {
+            RemapKind::Default => "Default",
+            RemapKind::Keyboard => "Keyboard function",
+            RemapKind::Mouse => "Mouse function",
+            RemapKind::Media => "Multimedia",
+            RemapKind::Windows => "Windows shortcut",
+            RemapKind::Power => "Power",
+            RemapKind::Hypershift => "Razer Hypershift",
+            RemapKind::Disable => "Disable",
+        }
+    }
+    fn desc(self) -> &'static str {
+        match self {
+            RemapKind::Default => "what's printed on the key",
+            RemapKind::Keyboard => "any key + modifiers, turbo",
+            RemapKind::Mouse => "clicks, side buttons, scroll",
+            RemapKind::Media => "play, volume, tracks",
+            RemapKind::Windows => "screenshot, Game Bar",
+            RemapKind::Power => "sleep, wake",
+            RemapKind::Hypershift => "hold for the 2nd layer",
+            RemapKind::Disable => "key does nothing",
+        }
+    }
+}
+
+/// Short badge for a remapped key (None = does what's printed on it).
+fn fn_badge(id: u8, f: KeyFn) -> Option<(String, Color32)> {
+    Some(match f {
+        KeyFn::Key { hid, mods } if Some(hid) == keymap::default_hid(id) && mods == 0 => return None,
+        KeyFn::Key { hid, mods } => (format!("{}{}", if mods != 0 { "+" } else { "" }, keymap::hid_name(hid)), ACC2),
+        KeyFn::Turbo { hid, .. } => (format!("T·{}", keymap::hid_name(hid)), ACC2),
+        KeyFn::Disabled => ("off".into(), BAD),
+        KeyFn::Mouse(b) => (["", "L", "R", "Mid", "M4", "M5", "", "", "", "▲", "▼"].get(b as usize).copied().unwrap_or("M").to_string(), INFO),
+        KeyFn::DoubleClick => ("2×".into(), INFO),
+        KeyFn::Media(m) => (
+            match m {
+                205 => "⏯",
+                181 => "⏭",
+                182 => "⏮",
+                183 => "⏹",
+                233 => "Vol+",
+                234 => "Vol−",
+                226 => "Mute",
+                111 => "☀+",
+                112 => "☀−",
+                _ => "♪",
+            }
+            .into(),
+            WARN,
+        ),
+        KeyFn::WinShortcut(_) => ("Win".into(), WARN),
+        KeyFn::Power(_) => ("Pwr".into(), WARN),
+        KeyFn::Hypershift => ("HS".into(), Color32::from_rgb(0xf9, 0x73, 0x16)),
+        KeyFn::Other(t) => (format!("#{t}"), DIM),
+    })
+}
+
+fn fn_long(f: KeyFn) -> String {
+    let mods = |m: u8| {
+        let mut s = String::new();
+        for (bit, n) in [(1u8, "Ctrl+"), (2, "Shift+"), (4, "Alt+"), (8, "Win+")] {
+            if m & bit != 0 {
+                s.push_str(n);
+            }
+        }
+        s
+    };
+    match f {
+        KeyFn::Key { hid, mods: m } => format!("{}{}", mods(m), keymap::hid_name(hid)),
+        KeyFn::Turbo { hid, mods: m, interval_ms } => format!("turbo {}{} ({}/s)", mods(m), keymap::hid_name(hid), 1000 / interval_ms.max(1)),
+        KeyFn::Disabled => "off".into(),
+        KeyFn::Mouse(b) => d::name_of(&d::MOUSE_BUTTONS, b).to_lowercase(),
+        KeyFn::DoubleClick => "double click".into(),
+        KeyFn::Media(m) => d::name_of(&d::MEDIA_KEYS, m).to_lowercase(),
+        KeyFn::WinShortcut(w) => d::name_of(&d::WIN_SHORTCUTS, w).to_string(),
+        KeyFn::Power(x) => d::name_of(&d::POWER_KEYS, x).to_lowercase(),
+        KeyFn::Hypershift => "Hypershift".into(),
+        KeyFn::Other(t) => format!("type {t}"),
+    }
 }

@@ -87,7 +87,7 @@ pub fn sync(s: &Snapshot) {
         }
         let tip = if tip.is_empty() { "RazerLite · no devices".to_string() } else { format!("RazerLite\n{}", tip.join("\n")) };
         let low = s.mouse.as_ref().is_some_and(|m| !m.charging && m.battery <= m.low_batt.max(5));
-        let state = if s.kb.is_none() && s.mouse.is_none() || s.synapse_running { 2 } else if low { 1 } else { 0 };
+        let state = if s.kb.is_none() && s.mouse.is_none() { 2 } else if low { 1 } else { 0 };
         if t.last.0 != tip {
             let _ = t.icon.set_tooltip(Some(&tip));
         }
@@ -98,7 +98,7 @@ pub fn sync(s: &Snapshot) {
     });
 }
 
-/// 32×32 RGBA icon: green tile, amber dot when low (1), grey when idle/blocked (2).
+/// 32×32 RGBA icon: green tile, amber dot when low (1), grey when no devices (2).
 pub fn icon_rgba(state: u8, size: u32) -> Vec<u8> {
     let n = size as f32;
     let mut px = vec![0u8; (size * size * 4) as usize];

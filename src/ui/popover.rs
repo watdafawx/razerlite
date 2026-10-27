@@ -131,7 +131,7 @@ impl App {
         }
 
         if snap.synapse_running {
-            ui.label(RichText::new("⚠ Synapse is running: keyboard changes are blocked.").color(WARN).size(12.0));
+            ui.label(RichText::new("Synapse is running: quit it from its tray icon.").color(WARN).size(12.0));
         } else if let Some(e) = &snap.error {
             ui.label(RichText::new(e).color(BAD).size(12.0));
         }

@@ -81,38 +81,97 @@ pub fn kb_set_thresholds(dev: &HidDevice, cur: &KeyAssign, press: u8, release: u
     Ok(KeyAssign { raw: a })
 }
 
-/// What a key does. Codes from Synapse's function table (Off=0, ButtonCode=1, KeyCode=2, MediaKeys=10).
+/// What a key does, stored on the keyboard. Function codes from Synapse's table
+/// (Off=0, ButtonCode=1, KeyCode=2, PowerKeys=9, MediaKeys=10, DoubleClick=11,
+/// ModeButtonkey=12 (Hypershift), TurboModeKey=13, Win8ShortcutsKey=21).
+/// Controller, joystick, launch-app and lighting remaps are Synapse software, not firmware.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum KeyFn {
     Disabled,
     /// HID usage + modifier bits (1 ctrl, 2 shift, 4 alt, 8 win)
     Key { hid: u8, mods: u8 },
-    /// 1 left, 2 right, 3 middle, 4 back, 5 forward
+    /// Key repeated while held, `interval_ms` between presses
+    Turbo { hid: u8, mods: u8, interval_ms: u16 },
+    /// See `MOUSE_BUTTONS`
     Mouse(u8),
+    DoubleClick,
+    /// USB consumer usage, see `MEDIA_KEYS`
+    Media(u16),
+    /// See `WIN_SHORTCUTS`
+    WinShortcut(u8),
+    /// See `POWER_KEYS`
+    Power(u8),
+    /// Hold for the Hypershift layer (like Fn)
+    Hypershift,
     Other(u8),
+}
+
+pub const MOUSE_BUTTONS: [(&str, u8); 7] =
+    [("Left click", 1), ("Right click", 2), ("Middle click", 3), ("Back (button 4)", 4), ("Forward (button 5)", 5), ("Scroll up", 9), ("Scroll down", 10)];
+pub const MEDIA_KEYS: [(&str, u16); 10] = [
+    ("Play / pause", 205),
+    ("Next track", 181),
+    ("Previous track", 182),
+    ("Stop", 183),
+    ("Volume up", 233),
+    ("Volume down", 234),
+    ("Mute", 226),
+    ("Display brightness up", 111),
+    ("Display brightness down", 112),
+    ("Eject", 184),
+];
+pub const WIN_SHORTCUTS: [(&str, u8); 3] = [("Screenshot", 99), ("Xbox Game Bar", 100), ("Cycle apps", 101)];
+pub const POWER_KEYS: [(&str, u8); 3] = [("Sleep", 130), ("Wake", 131), ("Power", 129)];
+
+pub fn name_of<T: PartialEq + Copy>(table: &[(&'static str, T)], v: T) -> &'static str {
+    table.iter().find(|x| x.1 == v).map(|x| x.0).unwrap_or("?")
 }
 
 impl KeyAssign {
     pub fn function(&self) -> KeyFn {
         let d = &self.raw[7..];
+        let b = |i: usize| d.get(i).copied().unwrap_or(0);
         match self.raw[5] {
             0 => KeyFn::Disabled,
-            2 if d.len() >= 2 => KeyFn::Key { mods: d[0], hid: d[1] },
-            1 if !d.is_empty() => KeyFn::Mouse(d[0]),
+            1 => KeyFn::Mouse(b(0)),
+            2 => KeyFn::Key { mods: b(0), hid: b(1) },
+            9 => KeyFn::Power(b(0)),
+            10 => KeyFn::Media(u16::from_be_bytes([b(0), b(1)])),
+            11 => KeyFn::DoubleClick,
+            12 => KeyFn::Hypershift,
+            13 => KeyFn::Turbo { mods: b(0), hid: b(1), interval_ms: u16::from_be_bytes([b(2), b(3)]) },
+            21 => KeyFn::WinShortcut(b(0)),
             x => KeyFn::Other(x),
         }
     }
 }
 
+/// Function bytes: [type, data length, data...]
+pub fn encode_fn(f: KeyFn) -> Result<Vec<u8>> {
+    Ok(match f {
+        KeyFn::Disabled => vec![0, 0],
+        KeyFn::Mouse(c) => vec![1, 1, c],
+        KeyFn::Key { hid, mods } => vec![2, 2, mods, hid],
+        KeyFn::Power(c) => vec![9, 1, c],
+        KeyFn::Media(u) => {
+            let [h, l] = u.to_be_bytes();
+            vec![10, 2, h, l]
+        }
+        KeyFn::DoubleClick => vec![11, 1, 1],
+        KeyFn::Hypershift => vec![12, 1, 1],
+        KeyFn::Turbo { hid, mods, interval_ms } => {
+            let [h, l] = interval_ms.to_be_bytes();
+            vec![13, 4, mods, hid, h, l]
+        }
+        KeyFn::WinShortcut(c) => vec![21, 1, c],
+        KeyFn::Other(_) => bail!("can't write this function type"),
+    })
+}
+
 /// Rewrite what a key does and keep its press/release points.
 pub fn kb_set_function(dev: &HidDevice, cur: &KeyAssign, f: KeyFn) -> Result<KeyAssign> {
     let mut a = cur.raw[..5].to_vec();
-    match f {
-        KeyFn::Disabled => a.extend([0, 0]),
-        KeyFn::Key { hid, mods } => a.extend([2, 2, mods, hid]),
-        KeyFn::Mouse(b) => a.extend([1, 1, b]),
-        KeyFn::Other(_) => bail!("can't write this function type"),
-    }
+    a.extend(encode_fn(f)?);
     transact(dev, KB_SET_KEY, &a, None)?;
     Ok(KeyAssign { raw: a })
 }
@@ -340,6 +399,27 @@ mod tests {
         assert!((byte_to_mm(0x8f) - 2.02).abs() < 0.02);
         assert_ne!(mm_to_byte(0.0), KB_DEFAULT);
         assert_ne!(mm_to_byte(9.0), KB_DEFAULT);
+    }
+
+    #[test]
+    fn every_function_round_trips() {
+        let fns = [
+            KeyFn::Disabled,
+            KeyFn::Key { hid: 0x1a, mods: 3 },
+            KeyFn::Turbo { hid: 4, mods: 0, interval_ms: 142 },
+            KeyFn::Mouse(5),
+            KeyFn::DoubleClick,
+            KeyFn::Media(233),
+            KeyFn::WinShortcut(99),
+            KeyFn::Power(130),
+            KeyFn::Hypershift,
+        ];
+        for f in fns {
+            let mut raw = vec![1, 18, 0, 0xff, 0xff];
+            raw.extend(encode_fn(f).unwrap());
+            assert_eq!(raw[6] as usize, raw.len() - 7, "length byte for {f:?}");
+            assert_eq!(KeyAssign { raw }.function(), f);
+        }
     }
 
     #[test]
