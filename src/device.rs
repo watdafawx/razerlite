@@ -327,3 +327,27 @@ pub fn mouse_set_low_batt(dev: &HidDevice, pct: u8) -> Result<()> {
     let v = (pct.min(100) as u32 * 255 / 100) as u8;
     transact(dev, cmd(1, 0x07, 0x01), &[v], None).map(|_| ())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn actuation_bytes_match_synapse() {
+        // Synapse stored 2.0 mm as 0x8f-ish and 3.6 mm is full travel.
+        assert_eq!(mm_to_byte(3.6), 254);
+        assert!((byte_to_mm(mm_to_byte(2.0)) - 2.0).abs() < 0.02);
+        assert!((byte_to_mm(0x8f) - 2.02).abs() < 0.02);
+        assert_ne!(mm_to_byte(0.0), KB_DEFAULT);
+        assert_ne!(mm_to_byte(9.0), KB_DEFAULT);
+    }
+
+    #[test]
+    fn key_function_round_trip() {
+        let a = KeyAssign { raw: vec![1, 18, 0, 0xff, 0xff, 2, 2, 0, 0x1a] };
+        assert_eq!(a.function(), KeyFn::Key { hid: 0x1a, mods: 0 });
+        assert_eq!(a.press(), 0xff);
+        let off = KeyAssign { raw: vec![1, 18, 0, 0xff, 0xff, 0, 0] };
+        assert_eq!(off.function(), KeyFn::Disabled);
+    }
+}

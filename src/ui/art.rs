@@ -102,8 +102,11 @@ pub fn kb_units() -> (Vec<(u8, &'static str, Rect)>, egui::Vec2) {
             if k.id != 0 {
                 let h = k.h + (k.h - 1.0) * GAP;
                 out.push((k.id, k.label, Rect::from_min_size(pos2(x, y), vec2(w, h))));
+                x += w + GAP;
+            } else {
+                // Spacers are measured in key pitch, so every row's clusters line up.
+                x += k.w * (1.0 + GAP);
             }
-            x += w + GAP;
         }
         maxw = maxw.max(x - GAP);
     }
@@ -159,5 +162,19 @@ pub fn logo(p: &Painter, r: Rect) {
         let a = std::f32::consts::TAU * (i as f32 / 3.0) - std::f32::consts::FRAC_PI_2;
         let d = vec2(a.cos(), a.sin());
         p.line_segment([c + d * r.width() * 0.12, c + d * r.width() * 0.34], Stroke::new(r.width() * 0.12, ON_ACC));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn keys_do_not_overlap() {
+        let (keys, size) = super::kb_units();
+        for (i, a) in keys.iter().enumerate() {
+            assert!(a.2.max.x <= size.x + 0.01 && a.2.max.y <= size.y + 0.01, "{} outside board", a.1);
+            for b in &keys[i + 1..] {
+                assert!(!a.2.shrink(0.01).intersects(b.2.shrink(0.01)), "{} overlaps {}", a.1, b.1);
+            }
+        }
     }
 }

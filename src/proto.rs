@@ -147,3 +147,27 @@ fn transact_once(dev: &HidDevice, c: Cmd, args: &[u8], size_override: Option<u8>
     }
     Err(Attempt::Retry(anyhow::anyhow!("device stayed busy")))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_layout_and_checksum() {
+        let r = build(cmd(80, 0x02, 0x12), &[1, 18, 0, 142, 113], None);
+        assert_eq!(r.len(), REPORT_LEN);
+        assert_eq!((r[5], r[6], r[7]), (80, 0x02, 0x12));
+        assert_eq!(&r[8..13], &[1, 18, 0, 142, 113]);
+        let xor = r[2..88].iter().fold(0u8, |a, b| a ^ b);
+        assert_eq!(r[88], xor);
+        assert!(r[1] < 32, "transaction id cycles 0..=31");
+    }
+
+    #[test]
+    fn size_override_and_arg_cap() {
+        let r = build(cmd(80, 0x0f, 0x02), &[0xaa; 100], Some(12));
+        assert_eq!(r[5], 12);
+        assert!(r[8..88].iter().all(|&b| b == 0xaa));
+        assert_eq!(r[89], 0);
+    }
+}

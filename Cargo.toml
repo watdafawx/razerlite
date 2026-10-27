@@ -2,6 +2,9 @@
 name = "razerlite"
 version = "0.1.0"
 edition = "2024"
+description = "Lightweight tray app to configure a Razer Huntsman V2 Analog and Viper V3 Pro without Synapse"
+license = "MIT"
+repository = "https://github.com/watdafawx/razerlite"
 
 [dependencies]
 anyhow = "1.0.104"

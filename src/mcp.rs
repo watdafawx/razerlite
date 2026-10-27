@@ -3,7 +3,7 @@
 //! (for working out new features) without the GUI.
 //!
 //! Register with Claude Code:
-//!   claude mcp add razerlite -- X:\Dev\razerlite\target\release\razerlite.exe --mcp
+//!   claude mcp add razerlite -- C:\path\to\razerlite.exe --mcp
 
 use crate::device::{self as d, DpiStages, Effect};
 use crate::proto::{cmd, transact};

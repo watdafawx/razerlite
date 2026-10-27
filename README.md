@@ -1,5 +1,12 @@
 # RazerLite
 
+[![CI](https://github.com/watdafawx/razerlite/actions/workflows/ci.yml/badge.svg)](https://github.com/watdafawx/razerlite/actions/workflows/ci.yml)
+
+> Unofficial. Not affiliated with or endorsed by Razer Inc. "Razer", "Synapse", "Huntsman" and "Viper"
+> are Razer's trademarks. Use at your own risk: it writes settings to your devices' onboard memory.
+
+Download: [latest release](https://github.com/watdafawx/razerlite/releases/latest) (Windows 10/11, x64).
+
 A small Synapse replacement for a **Razer Huntsman V2 Analog** keyboard and a **Viper V3 Pro** mouse.
 Rust + egui, one 4.9 MB exe. Runs in the tray like Synapse: **12 MB RAM, 0% CPU** in the background
 (Synapse: ~1.3 GB across 14 processes). All settings are saved to the devices' onboard memory.
@@ -92,7 +99,7 @@ cargo build --release
 `razerlite.exe --mcp` runs a stdio MCP server (no window). Register it with Claude Code:
 
 ```
-claude mcp add razerlite -- X:\Dev\razerlite\target\release\razerlite.exe --mcp
+claude mcp add razerlite -- C:\path\to\razerlite.exe --mcp
 ```
 
 Tools: `list_interfaces`, `state`, `kb_keys`, `kb_set_actuation`, `kb_set_debounce`, `kb_set_polling`,

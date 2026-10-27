@@ -102,3 +102,27 @@ pub fn hid_name(hid: u8) -> String {
     }
     format!("0x{hid:02x}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_are_unique_and_known() {
+        let ids = all_ids();
+        let mut seen = std::collections::HashSet::new();
+        for id in &ids {
+            assert!(seen.insert(*id), "duplicate key id {id}");
+            if *id != FN_KEY {
+                assert!(default_hid(*id).is_some(), "no HID usage for key {id}");
+            }
+        }
+        assert_eq!(ids.len(), 104, "full-size ANSI board");
+    }
+
+    #[test]
+    fn wasd_matches_hid() {
+        assert_eq!(WASD.map(|k| default_hid(k).unwrap()), [26, 4, 22, 7]);
+        assert_eq!(hid_name(26), "W");
+    }
+}
