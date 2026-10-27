@@ -1,0 +1,18 @@
+[package]
+name = "razerlite"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts"] }
+egui = "0.37.0"
+hidapi = "2"
+serde_json = "1.0.154"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
