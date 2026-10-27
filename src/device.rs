@@ -81,6 +81,42 @@ pub fn kb_set_thresholds(dev: &HidDevice, cur: &KeyAssign, press: u8, release: u
     Ok(KeyAssign { raw: a })
 }
 
+/// What a key does. Codes from Synapse's function table (Off=0, ButtonCode=1, KeyCode=2, MediaKeys=10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum KeyFn {
+    Disabled,
+    /// HID usage + modifier bits (1 ctrl, 2 shift, 4 alt, 8 win)
+    Key { hid: u8, mods: u8 },
+    /// 1 left, 2 right, 3 middle, 4 back, 5 forward
+    Mouse(u8),
+    Other(u8),
+}
+
+impl KeyAssign {
+    pub fn function(&self) -> KeyFn {
+        let d = &self.raw[7..];
+        match self.raw[5] {
+            0 => KeyFn::Disabled,
+            2 if d.len() >= 2 => KeyFn::Key { mods: d[0], hid: d[1] },
+            1 if !d.is_empty() => KeyFn::Mouse(d[0]),
+            x => KeyFn::Other(x),
+        }
+    }
+}
+
+/// Rewrite what a key does and keep its press/release points.
+pub fn kb_set_function(dev: &HidDevice, cur: &KeyAssign, f: KeyFn) -> Result<KeyAssign> {
+    let mut a = cur.raw[..5].to_vec();
+    match f {
+        KeyFn::Disabled => a.extend([0, 0]),
+        KeyFn::Key { hid, mods } => a.extend([2, 2, mods, hid]),
+        KeyFn::Mouse(b) => a.extend([1, 1, b]),
+        KeyFn::Other(_) => bail!("can't write this function type"),
+    }
+    transact(dev, KB_SET_KEY, &a, None)?;
+    Ok(KeyAssign { raw: a })
+}
+
 pub struct KbProfiles {
     pub ids: Vec<u8>,
     pub active: u8,
@@ -132,7 +168,24 @@ pub enum Effect {
     StarlightRandom,
 }
 
+impl Default for Effect {
+    fn default() -> Self {
+        Effect::Static
+    }
+}
+
 impl Effect {
+    pub fn from_code(c: u8) -> Self {
+        match c {
+            0 => Effect::Off,
+            2 => Effect::Breathing,
+            3 => Effect::Spectrum,
+            4 => Effect::WaveRight,
+            5 => Effect::Reactive,
+            7 => Effect::Starlight,
+            _ => Effect::Static,
+        }
+    }
     pub const ALL: [Effect; 10] = [
         Effect::Static,
         Effect::Spectrum,

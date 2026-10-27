@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mockups",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["-y", "http-server@14.1.1", "mockups", "-p", "8793", "-c-", "-s"],
+      "port": 8793
+    }
+  ]
+}

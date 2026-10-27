@@ -1,1 +1,4 @@
 /target
+/mockups
+# Razer product images (from the local Synapse cache), not redistributed
+/assets/devices

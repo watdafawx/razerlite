@@ -78,7 +78,7 @@ fn tool(name: &str, desc: &str, props: Value, required: &[&str]) -> Value {
     json!({"name":name,"description":desc,"inputSchema":{"type":"object","properties":props,"required":required}})
 }
 
-fn tools() -> Vec<Value> {
+pub fn tools() -> Vec<Value> {
     let device = json!({"type":"string","enum":["keyboard","mouse"]});
     vec![
         tool("list_interfaces", "List every connected Razer HID interface (pid, interface, usage page/usage).", json!({}), &[]),
@@ -148,7 +148,7 @@ fn mm_or_null(b: u8) -> Value {
     if b == d::KB_DEFAULT { Value::Null } else { json!((d::byte_to_mm(b) * 100.0).round() / 100.0) }
 }
 
-fn call(api: &HidApi, name: &str, a: &Value) -> Result<Value> {
+pub fn call(api: &HidApi, name: &str, a: &Value) -> Result<Value> {
     Ok(match name {
         "list_interfaces" => {
             let v: Vec<Value> = api
