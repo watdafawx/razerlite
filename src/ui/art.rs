@@ -167,6 +167,17 @@ pub fn logo(p: &Painter, r: Rect) {
 
 #[cfg(test)]
 mod tests {
+    /// Writes the key layout for `tools/render_devices.py`:
+    /// `cargo test dump_layout -- --ignored`
+    #[test]
+    #[ignore]
+    fn dump_layout() {
+        let (keys, size) = super::kb_units();
+        let keys: Vec<_> = keys.iter().map(|(id, l, r)| serde_json::json!([id, l, r.min.x, r.min.y, r.width(), r.height()])).collect();
+        let j = serde_json::json!({ "size": [size.x, size.y], "keys": keys });
+        std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/tools/layout.json"), j.to_string()).unwrap();
+    }
+
     #[test]
     fn keys_do_not_overlap() {
         let (keys, size) = super::kb_units();

@@ -23,13 +23,19 @@ Rust + egui, one 4.9 MB exe. Runs in the tray like Synapse: **12 MB RAM, 0% CPU*
 
 ## Device images
 
-The window and popover use Razer's own product renders (Huntsman V2 Analog US layout, Viper V3 Pro black),
+The exe has **generic keyboard and mouse renders** built in (`assets\generic`, drawn by
+`tools\render_devices.py` from the app's own key layout, so key hit areas line up).
+
+Optional: use Razer's own product renders instead (Huntsman V2 Analog US layout, Viper V3 Pro black),
 copied from the local Synapse cache (`%LOCALAPPDATA%\Razer\RazerAppEngine\User Data\Default\Service Worker\CacheStorage`).
 They're Razer's images, so they're **not in git**: put `huntsman_v2_analog.png` and `viper_v3_pro.png` in
-`assets\devices\` (next to the exe or in the repo) or `%APPDATA%\RazerLite\devices\`. Without them the app
-draws its own line art. The keyboard photo is split into a grey base and a light layer tinted with the current
-lighting color (Spectrum/Wave show the original rainbow render). Key hit areas are mapped onto the photo
-(`ui/images.rs`: `KB_ORIGIN`, `KB_UNIT`).
+`assets\devices\` (next to the exe or in the repo) or `%APPDATA%\RazerLite\devices\`.
+`RAZERLITE_GENERIC=1` forces the built-in renders.
+
+The keyboard image is split into a grey base and a light layer tinted with the current lighting color
+(Spectrum/Wave show the original rainbow image). Key hit areas are mapped onto it
+(`ui/images.rs`: `KB_ORIGIN`, `KB_UNIT`). After changing the key layout, regenerate:
+`cargo test dump_layout -- --ignored`, then `python tools/render_devices.py` (needs Pillow).
 
 ## Features
 

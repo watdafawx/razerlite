@@ -1,12 +1,15 @@
-//! Razer's product images, taken from the local Synapse cache by the user and kept out of git.
-//! Looked up in `<exe>\assets\devices`, the repo's `assets\devices`, then
-//! `%APPDATA%\RazerLite\devices`. Missing files fall back to the drawn line art.
+//! Device images. Razer's product renders (copied from the Synapse cache by the user, kept out
+//! of git) are looked up in `<exe>\assets\devices`, the repo's `assets\devices`, then
+//! `%APPDATA%\RazerLite\devices`. Without them the app uses its own generic renders
+//! (`assets\generic`, made by `tools\render_devices.py`), built into the exe.
 
 use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
 use std::path::PathBuf;
 
 pub const KB_FILE: &str = "huntsman_v2_analog.png";
 pub const MOUSE_FILE: &str = "viper_v3_pro.png";
+const GENERIC_KB: &[u8] = include_bytes!("../../assets/generic/keyboard.png");
+const GENERIC_MOUSE: &[u8] = include_bytes!("../../assets/generic/mouse.png");
 
 /// Where key (0,0) of `art::kb_units` sits in the 750×420 keyboard image, and the size of
 /// one key unit in image pixels. Measured on Synapse's top-down render.
@@ -59,6 +62,10 @@ pub struct DeviceImages {
 }
 
 fn find(name: &str) -> Option<PathBuf> {
+    // Dev: preview the built-in renders even when Razer's images are installed.
+    if std::env::var_os("RAZERLITE_GENERIC").is_some() {
+        return None;
+    }
     let mut dirs = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
         if let Some(d) = exe.parent() {
@@ -72,8 +79,12 @@ fn find(name: &str) -> Option<PathBuf> {
     dirs.into_iter().map(|d| d.join(name)).find(|p| p.is_file())
 }
 
-fn decode(path: &PathBuf) -> Option<ColorImage> {
-    let bytes = std::fs::read(path).ok()?;
+/// The user's file if present, else the built-in generic render.
+fn load_or(name: &str, generic: &[u8]) -> Option<ColorImage> {
+    find(name).and_then(|p| std::fs::read(p).ok()).and_then(|b| decode(&b)).or_else(|| decode(generic))
+}
+
+fn decode(bytes: &[u8]) -> Option<ColorImage> {
     let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
     dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = dec.read_info().ok()?;
@@ -135,14 +146,14 @@ fn split_lighting(img: &ColorImage) -> (ColorImage, ColorImage) {
 
 pub fn load(ctx: &egui::Context) -> DeviceImages {
     let mut out = DeviceImages { kb: None, kb_base: None, kb_glow: None, mouse: None, mouse_mask: None };
-    if let Some(img) = find(KB_FILE).and_then(|p| decode(&p)) {
+    if let Some(img) = load_or(KB_FILE, GENERIC_KB) {
         let bb = bbox(&img);
         let (base, glow) = split_lighting(&img);
         out.kb_base = Some(upload(ctx, "kb_base", base, bb));
         out.kb_glow = Some(upload(ctx, "kb_glow", glow, bb));
         out.kb = Some(upload(ctx, "kb", img, bb));
     }
-    if let Some(img) = find(MOUSE_FILE).and_then(|p| decode(&p)) {
+    if let Some(img) = load_or(MOUSE_FILE, GENERIC_MOUSE) {
         let bb = bbox(&img);
         let mut mask = img.clone();
         for p in mask.pixels.iter_mut() {
